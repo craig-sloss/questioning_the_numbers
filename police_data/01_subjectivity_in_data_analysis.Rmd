@@ -1,0 +1,159 @@
+---
+title: "Subjectivity in Data Analysis"
+author: "Craig A. Sloss"
+date: "2023-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r cars}
+library(tidyverse)
+reported_crime_data = read_csv("../reported_crime_data.csv")
+```
+
+# Section 1
+
+```{r}
+overall_incidents_data = reported_crime_data %>%
+  filter(Violations == "Total, all violations [0]" & Statistics == "Rate per 100,000 population")
+ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  coord_cartesian(ylim = c(0, 8000)) +
+  geom_smooth(method = "lm") +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  labs(title = "Total, all violations -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population")
+ggsave("./total_reported_crime_rate_1998-2021.jpg", device = "jpeg")
+```
+
+```{r}
+ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line(colour = "grey") +
+  geom_point(colour = "grey") +
+  coord_cartesian(ylim = c(0, 8000)) +
+  geom_point(data = overall_incidents_data %>% filter(REF_DATE >= 2014), colour = "black") +
+  geom_line(data = overall_incidents_data %>% filter(REF_DATE >= 2014), colour = "black") +
+  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2014), method = "lm") +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  labs(title = "Total, all violations -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population")
+ggsave("./total_reported_crime_rate_2014-2021.jpg", device = "jpeg")
+```
+
+```{r}
+ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line(colour = "grey") +
+  geom_point(colour = "grey") +
+  coord_cartesian(ylim = c(0, 8000)) +
+  geom_point(data = overall_incidents_data %>% filter(REF_DATE >= 2018), colour = "black") +
+  geom_line(data = overall_incidents_data %>% filter(REF_DATE >= 2018), colour = "black") +
+  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2018), method = "lm") +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  labs(title = "Total, all violations -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population")
+ggsave("./total_reported_crime_rate_2018-2021.jpg", device = "jpeg")
+```
+
+```{r}
+years = 1998:2019
+upper_ci = rep(NA, length(years))
+middle = rep(NA, length(years)) 
+lower_ci = rep(NA, length(years))
+for (i in 1:length(years)) {
+  trend_data = overall_incidents_data %>%
+    filter(REF_DATE >= years[i])
+  trend_glm = glm(VALUE ~ REF_DATE, data = trend_data, family = Gamma(link = "log"))
+  se = summary(trend_glm)$coefficients[2,2]
+  beta = trend_glm$coefficients[2]
+  upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
+  middle[i] = (exp(beta) - 1) * 100
+  lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+}
+trend_result_data = data.frame(years, upper_ci, middle, lower_ci)
+```
+
+
+```{r}
+ggplot(trend_result_data, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  coord_cartesian(ylim = c(-6, 6)) +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "All Violations, Rate per 100K population - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated")
+ggsave("./total_reported_crime_rate_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+
+```{r}
+theft_under_5000_data = reported_crime_data %>%
+  filter(Violations == "Theft $5,000 or under [2140]" & Statistics == "Rate per 100,000 population")
+theft_lm = lm(VALUE ~ REF_DATE, data = theft_under_5000_data %>% filter(REF_DATE >= 2006))
+theft_intercept = theft_lm$coefficients[1]
+theft_slope = theft_lm$coefficients[2]
+```
+
+
+```{r}
+ggplot(data = theft_under_5000_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line(colour = "grey") +
+  geom_point(colour = "grey") +
+  geom_line(data = theft_under_5000_data %>% filter(REF_DATE >= 2006)) +
+  geom_point(data = theft_under_5000_data %>% filter(REF_DATE >= 2006)) +
+  geom_smooth(data = theft_under_5000_data %>% filter(REF_DATE >= 2006), method = "lm") +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  coord_cartesian(ylim = c(0, 1250)) +
+  labs(title = "Theft $5,000 or under -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population")
+ggsave("./theft_under_5000_2006-2021.jpg", device = "jpeg")
+```
+
+```{r}
+years = 1998:2018
+upper_ci = rep(NA, length(years))
+middle = rep(NA, length(years)) 
+lower_ci = rep(NA, length(years))
+for (i in 1:length(years)) {
+  trend_data = theft_under_5000_data %>%
+    filter(REF_DATE >= years[i])
+  trend_glm = glm(VALUE ~ REF_DATE, data = trend_data, family = Gamma(link = "log"))
+  se = summary(trend_glm)$coefficients[2,2]
+  beta = trend_glm$coefficients[2]
+  upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
+  middle[i] = (exp(beta) - 1) * 100
+  lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+}
+trend_result_data_theft = data.frame(years, upper_ci, middle, lower_ci)
+```
+
+```{r}
+ggplot(trend_result_data_theft, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  coord_cartesian(ylim = c(-10, 6)) +
+  scale_x_continuous(breaks = seq(1998, 2018, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Theft $5000 or under, Rate per 100K population - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated")
+ggsave("./theft_sensitivity_analysis.jpg", device = "jpeg")
+```
