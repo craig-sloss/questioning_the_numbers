@@ -1,7 +1,7 @@
 ---
 title: "Subjectivity in Data Analysis"
 author: "Craig A. Sloss"
-date: "2023-04-07"
+date: "2023-05-06"
 output: html_document
 ---
 
@@ -11,10 +11,32 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Setup
 
+Import packages used in this notebook:
 ```{r cars}
-library(tidyverse)
-reported_crime_data = read_csv("../reported_crime_data.csv")
+require(tidyverse)
+require(curl)
 ```
+
+Download the full Uniform Crime Reporting Survey data from https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3510017701:
+```{r}
+curl_download("https://www150.statcan.gc.ca/n1/tbl/csv/35100177-eng.zip", "ucr_full.zip")
+unzip("ucr_full.zip")
+ucr_full = read_csv("./35100177.csv")
+```
+
+Preview the data:
+```{r}
+ucr_full %>% head()
+```
+
+Keep data for Kitchener-Waterloo-Cambridge, and drop columns that are not needed:
+```{r}
+reported_crime_data = ucr_full %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
+  select(REF_DATE, Violations, Statistics, VALUE)
+reported_crime_data %>% head()
+```
+
 
 # Section 1
 
@@ -30,7 +52,8 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
        x = "Year",
-       y = "Incidents per 100,000 population")
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./total_reported_crime_rate_1998-2021.jpg", device = "jpeg")
 ```
 
@@ -46,7 +69,8 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
        x = "Year",
-       y = "Incidents per 100,000 population")
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./total_reported_crime_rate_2014-2021.jpg", device = "jpeg")
 ```
 
@@ -62,7 +86,8 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
        x = "Year",
-       y = "Incidents per 100,000 population")
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./total_reported_crime_rate_2018-2021.jpg", device = "jpeg")
 ```
 
@@ -96,7 +121,8 @@ ggplot(trend_result_data, aes(x = years, y = middle)) +
   labs(title = "Trend analysis results based on first year included in analysis",
        subtitle = "All Violations, Rate per 100K population - Kitchener-Cambridge-Waterloo",
        x = "First year included in trend calculation",
-       y = "Percentage trend calculated")
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./total_reported_crime_rate_trend_sensitivity_analysis.jpg", device = "jpeg")
 ```
 
@@ -121,7 +147,8 @@ ggplot(data = theft_under_5000_data, aes(x = REF_DATE, y = VALUE)) +
   labs(title = "Theft $5,000 or under -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
        x = "Year",
-       y = "Incidents per 100,000 population")
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./theft_under_5000_2006-2021.jpg", device = "jpeg")
 ```
 
@@ -154,6 +181,7 @@ ggplot(trend_result_data_theft, aes(x = years, y = middle)) +
   labs(title = "Trend analysis results based on first year included in analysis",
        subtitle = "Theft $5000 or under, Rate per 100K population - Kitchener-Cambridge-Waterloo",
        x = "First year included in trend calculation",
-       y = "Percentage trend calculated")
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./theft_sensitivity_analysis.jpg", device = "jpeg")
 ```
