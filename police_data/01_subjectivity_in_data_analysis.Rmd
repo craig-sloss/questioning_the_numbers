@@ -9,9 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Setup
+# Introduction and Setup
 
-Import packages used in this notebook:
+This notebook is a supplement to the article "Debunking the Police Part 1: Subjectivity in Mathematics" in *Questioning the Numbers*, showing the code used to generate the graphics and statistical results appearing in the article. (See https://questioning-the-numbers.ghost.io/) Section titles in this document correspond to the sections in the article. This notebook also contains some additional discussion of technical details that are not in the article.
+
+The following packages are used in this notebook:
 ```{r cars}
 require(tidyverse)
 require(curl)
@@ -29,7 +31,7 @@ Preview the data:
 ucr_full %>% head()
 ```
 
-Keep data for Kitchener-Waterloo-Cambridge, and drop columns that are not needed:
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
 ```{r}
 reported_crime_data = ucr_full %>%
   filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
@@ -38,9 +40,11 @@ reported_crime_data %>% head()
 ```
 
 
-# Section 1
+# Reported Crime Rates
 
-```{r}
+This code produces a graph of the rate of violations per 100,000 population over time. The blue curve on the graph is fit using a GLM with a log-link function, for consistency with later analysis that calculates multiplicative trends. (The visual is not materially different from fitting a linear trend.) This graph uses all available data points.
+
+```{r message=FALSE}
 overall_incidents_data = reported_crime_data %>%
   filter(Violations == "Total, all violations [0]" & Statistics == "Rate per 100,000 population")
 ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
@@ -57,7 +61,11 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
 ggsave("./total_reported_crime_rate_1998-2021.jpg", device = "jpeg")
 ```
 
-```{r}
+# How many data points to use?
+
+This section produces two additional graphs to show how the direction of the trend changes if fewer points are used. This graph uses only the 8 most recent years:
+
+```{r message=FALSE}
 ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   geom_line(colour = "grey") +
   geom_point(colour = "grey") +
@@ -74,7 +82,9 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
 ggsave("./total_reported_crime_rate_2014-2021.jpg", device = "jpeg")
 ```
 
-```{r}
+This graph uses only the four most recent years:
+
+```{r message=FALSE}
 ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   geom_line(colour = "grey") +
   geom_point(colour = "grey") +
@@ -90,6 +100,24 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
        caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./total_reported_crime_rate_2018-2021.jpg", device = "jpeg")
 ```
+
+# Trying different methods
+
+This function calculates a series of multiplicative trend values, each using a different cutoff point for the data. The inputs to this function are:
+
+* x is an array representing the time variable in the data 
+
+* y is an array containing the quantity for which we want to calculate a trend factor
+
+* method is a string representing the form of the model used to determine the trend. There are three options to calculate a multiplicative trend: "log-gamma", "log-normal", and "log-inverse-gaussian", each of which corresponds to a different error distribution assumption. The option "linear" will determine an additive trend using ordinary linear regression.
+
+The output is a data frame with four columns:
+
+* x_range indicates the starting point of the range of data used to calculate the trend factor. All data points corrsponding to x_range and later are included in the calculation. The last two years in the range are omitted from x_range because they correspond to too few points to perform a calculation.
+
+* middle indicates the best estimate of the trend using the given number of data points. It is either expressed as a multiplicative trend, scaled so that it can be interpreted as plus or minus a number of percentage points (i.e. 1 is subtracted and the result multiplied by 100), or as a linear trend, depending on the option used for "method."
+
+* upper_ci and lower_ci indicate the upper and lower bounds of an approximate 95% confidence interval for middle. For multiplicative trends, the intervals are calculated on a log scale then exponentiated. 
 
 ```{r}
 trend_sensitivity_test = function(x, y, method = "log-gamma") {
@@ -140,6 +168,8 @@ trend_sensitivity_test = function(x, y, method = "log-gamma") {
 }
 ```
 
+Perform the trend sensitivity test on rates of all incidents over time:
+
 ```{r}
 trend_result_data = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
                                            y = overall_incidents_data %>% pull(VALUE),
@@ -147,7 +177,13 @@ trend_result_data = trend_sensitivity_test(x = overall_incidents_data %>% pull(R
   rename(years = x_range)
 ```
 
+Numerical results:
 ```{r}
+trend_result_data
+```
+
+Plot the results:
+```{r message=FALSE}
 ggplot(trend_result_data, aes(x = years, y = middle)) + 
   geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
   geom_line(colour = "blue") + 
@@ -165,7 +201,9 @@ ggsave("./total_reported_crime_rate_trend_sensitivity_analysis.jpg", device = "j
 
 ## Sensitivity testing -- trend model distributional assumption
 
-This section contains additional methodological sensitivity tests, beyond what was discussed in the article, to confirm that the decision to use a Gamma distribution with a log-link function to produce a multiplicative trend does not have a material impact on the results. Similar results are obtained assuming log-normal, log-inverse-Gaussian, and linear models. (The only difference is that the linear model produces an additive trend, rather than a multiplicatie one, that is on a different scale than the log-link models.)
+This section contains additional methodological sensitivity tests, beyond what was discussed in the article, to confirm that the decision to use a Gamma distribution with a log-link function to produce a multiplicative trend does not have a material impact on the results. Similar results are obtained assuming log-normal, log-inverse-Gaussian, and linear models. (The only difference is that the linear model produces an additive trend, rather than a multiplicative one, that is on a different scale than the log-link models.)
+
+Using a log-normal distribution:
 
 ```{r}
 trend_result_data_lognormal = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
@@ -189,6 +227,8 @@ ggplot(trend_result_data_lognormal, aes(x = years, y = middle)) +
        caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
 ```
 
+Using a log-inverse-Gaussian distribution:
+
 ```{r}
 trend_result_data_inverse_gaussian = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
                                                             y = overall_incidents_data %>% pull(VALUE),
@@ -211,6 +251,8 @@ ggplot(trend_result_data_inverse_gaussian, aes(x = years, y = middle)) +
        caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
 ```
 
+Using a linear model:
+
 ```{r}
 trend_result_data_linear = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
                                            y = overall_incidents_data %>% pull(VALUE),
@@ -232,18 +274,17 @@ ggplot(trend_result_data_linear, aes(x = years, y = middle)) +
        caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
 ```
 
-# Section 3
+# What does a consistent trend look like?
+
+This section contains a contrasting example where there is a consistent trend, and in which the results are similar regardless of the starting point selected for the trend analysis:
 
 ```{r}
 theft_under_5000_data = reported_crime_data %>%
   filter(Violations == "Theft $5,000 or under [2140]" & Statistics == "Rate per 100,000 population")
-theft_lm = lm(VALUE ~ REF_DATE, data = theft_under_5000_data %>% filter(REF_DATE >= 2006))
-theft_intercept = theft_lm$coefficients[1]
-theft_slope = theft_lm$coefficients[2]
 ```
 
 
-```{r}
+```{r message=FALSE}
 ggplot(data = theft_under_5000_data, aes(x = REF_DATE, y = VALUE)) +
   geom_line(colour = "grey") +
   geom_point(colour = "grey") +
@@ -260,6 +301,7 @@ ggplot(data = theft_under_5000_data, aes(x = REF_DATE, y = VALUE)) +
 ggsave("./theft_under_5000_2006-2021.jpg", device = "jpeg")
 ```
 
+Perform a sensitivity test on the starting point assumption:
 ```{r}
 trend_result_data_theft = trend_sensitivity_test(x = theft_under_5000_data %>% pull(REF_DATE),
                                            y = theft_under_5000_data %>% pull(VALUE),
@@ -268,6 +310,11 @@ trend_result_data_theft = trend_sensitivity_test(x = theft_under_5000_data %>% p
 ```
 
 ```{r}
+trend_result_data_theft
+```
+
+
+```{r message=FALSE}
 ggplot(trend_result_data_theft, aes(x = years, y = middle)) + 
   geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
   geom_line(colour = "blue") + 
