@@ -47,7 +47,7 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   geom_line() +
   geom_point() +
   coord_cartesian(ylim = c(0, 8000)) +
-  geom_smooth(method = "lm") +
+  geom_smooth(method = "glm", method.args = list(family = Gamma(link = "log"))) +
   scale_x_continuous(breaks = seq(1998, 2021, 2)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
@@ -64,7 +64,7 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   coord_cartesian(ylim = c(0, 8000)) +
   geom_point(data = overall_incidents_data %>% filter(REF_DATE >= 2014), colour = "black") +
   geom_line(data = overall_incidents_data %>% filter(REF_DATE >= 2014), colour = "black") +
-  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2014), method = "lm") +
+  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2014), method = "glm", method.args = list(family = Gamma(link = "log"))) +
   scale_x_continuous(breaks = seq(1998, 2021, 2)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
@@ -81,7 +81,7 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
   coord_cartesian(ylim = c(0, 8000)) +
   geom_point(data = overall_incidents_data %>% filter(REF_DATE >= 2018), colour = "black") +
   geom_line(data = overall_incidents_data %>% filter(REF_DATE >= 2018), colour = "black") +
-  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2018), method = "lm") +
+  geom_smooth(data = overall_incidents_data %>% filter(REF_DATE >= 2018), method = "glm", method.args = list(family = Gamma(link = "log"))) +
   scale_x_continuous(breaks = seq(1998, 2021, 2)) +
   labs(title = "Total, all violations -- Rate per 100,000 population",
        subtitle = "Kitchener-Cambridge-Waterloo",
@@ -92,23 +92,60 @@ ggsave("./total_reported_crime_rate_2018-2021.jpg", device = "jpeg")
 ```
 
 ```{r}
-years = 1998:2019
-upper_ci = rep(NA, length(years))
-middle = rep(NA, length(years)) 
-lower_ci = rep(NA, length(years))
-for (i in 1:length(years)) {
-  trend_data = overall_incidents_data %>%
-    filter(REF_DATE >= years[i])
-  trend_glm = glm(VALUE ~ REF_DATE, data = trend_data, family = Gamma(link = "log"))
-  se = summary(trend_glm)$coefficients[2,2]
-  beta = trend_glm$coefficients[2]
-  upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
-  middle[i] = (exp(beta) - 1) * 100
-  lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+trend_sensitivity_test = function(x, y, method = "log-gamma") {
+  x_min = min(x)
+  x_max = max(x) - 2
+  x_range = x_min:x_max
+  x_length = length(x_range)
+  upper_ci = rep(NA, x_length)
+  middle = rep(NA, x_length) 
+  lower_ci = rep(NA, x_length)
+  data = data.frame(x, y)
+  for (i in 1:x_length) {
+    truncated_data = data %>%
+      filter(x >= x_range[i])
+    
+    if (method == "log-gamma") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = Gamma(link = "log"))
+    }
+    else if (method == "linear") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "identity"))
+    }
+    else if (method == "log-normal") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "log"))
+    }
+    else if (method == "log-inverse-gaussian") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = inverse.gaussian(link = "log"))
+    }
+    else{
+      print("Error: valid methods are log-gamma, linear, log-normal, or log-inverse-gaussian")
+      stop()
+    }
+    
+    se = summary(trend_glm)$coefficients[2,2]
+    beta = trend_glm$coefficients[2]
+    if (method == "linear") {
+      upper_ci[i] = beta + 2 * se 
+      middle[i] = beta 
+      lower_ci[i] = beta - 2 * se
+    }
+    else {
+      upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
+      middle[i] = (exp(beta) - 1) * 100
+      lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+    }
+  }
+  trend_result_data = data.frame(x_range, upper_ci, middle, lower_ci)
+  return(trend_result_data)
 }
-trend_result_data = data.frame(years, upper_ci, middle, lower_ci)
 ```
 
+```{r}
+trend_result_data = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
+                                           y = overall_incidents_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
+```
 
 ```{r}
 ggplot(trend_result_data, aes(x = years, y = middle)) + 
@@ -126,6 +163,77 @@ ggplot(trend_result_data, aes(x = years, y = middle)) +
 ggsave("./total_reported_crime_rate_trend_sensitivity_analysis.jpg", device = "jpeg")
 ```
 
+## Sensitivity testing -- trend model distributional assumption
+
+This section contains additional methodological sensitivity tests, beyond what was discussed in the article, to confirm that the decision to use a Gamma distribution with a log-link function to produce a multiplicative trend does not have a material impact on the results. Similar results are obtained assuming log-normal, log-inverse-Gaussian, and linear models. (The only difference is that the linear model produces an additive trend, rather than a multiplicatie one, that is on a different scale than the log-link models.)
+
+```{r}
+trend_result_data_lognormal = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
+                                                     y = overall_incidents_data %>% pull(VALUE),
+                                                     method = "log-normal") %>%
+  rename(years = x_range)
+```
+
+```{r}
+ggplot(trend_result_data_lognormal, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  coord_cartesian(ylim = c(-6, 6)) +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "All Violations, Rate per 100K population - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+```
+
+```{r}
+trend_result_data_inverse_gaussian = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
+                                                            y = overall_incidents_data %>% pull(VALUE),
+                                                            method = "log-inverse-gaussian") %>%
+  rename(years = x_range)
+```
+
+```{r}
+ggplot(trend_result_data_inverse_gaussian, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  coord_cartesian(ylim = c(-6, 6)) +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "All Violations, Rate per 100K population - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+```
+
+```{r}
+trend_result_data_linear = trend_sensitivity_test(x = overall_incidents_data %>% pull(REF_DATE),
+                                           y = overall_incidents_data %>% pull(VALUE),
+                                           method = "linear") %>%
+  rename(years = x_range)
+```
+
+```{r}
+ggplot(trend_result_data_linear, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "All Violations, Rate per 100K population - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+```
+
+# Section 3
+
 ```{r}
 theft_under_5000_data = reported_crime_data %>%
   filter(Violations == "Theft $5,000 or under [2140]" & Statistics == "Rate per 100,000 population")
@@ -141,7 +249,7 @@ ggplot(data = theft_under_5000_data, aes(x = REF_DATE, y = VALUE)) +
   geom_point(colour = "grey") +
   geom_line(data = theft_under_5000_data %>% filter(REF_DATE >= 2006)) +
   geom_point(data = theft_under_5000_data %>% filter(REF_DATE >= 2006)) +
-  geom_smooth(data = theft_under_5000_data %>% filter(REF_DATE >= 2006), method = "lm") +
+  geom_smooth(data = theft_under_5000_data %>% filter(REF_DATE >= 2006), method = "glm", method.args = list(family = Gamma(link = "log"))) +
   scale_x_continuous(breaks = seq(1998, 2021, 2)) +
   coord_cartesian(ylim = c(0, 1250)) +
   labs(title = "Theft $5,000 or under -- Rate per 100,000 population",
@@ -153,21 +261,10 @@ ggsave("./theft_under_5000_2006-2021.jpg", device = "jpeg")
 ```
 
 ```{r}
-years = 1998:2018
-upper_ci = rep(NA, length(years))
-middle = rep(NA, length(years)) 
-lower_ci = rep(NA, length(years))
-for (i in 1:length(years)) {
-  trend_data = theft_under_5000_data %>%
-    filter(REF_DATE >= years[i])
-  trend_glm = glm(VALUE ~ REF_DATE, data = trend_data, family = Gamma(link = "log"))
-  se = summary(trend_glm)$coefficients[2,2]
-  beta = trend_glm$coefficients[2]
-  upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
-  middle[i] = (exp(beta) - 1) * 100
-  lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
-}
-trend_result_data_theft = data.frame(years, upper_ci, middle, lower_ci)
+trend_result_data_theft = trend_sensitivity_test(x = theft_under_5000_data %>% pull(REF_DATE),
+                                           y = theft_under_5000_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
 ```
 
 ```{r}
