@@ -61,6 +61,24 @@ ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
 ggsave("./total_reported_crime_rate_1998-2021.jpg", device = "jpeg")
 ```
 
+```{r message=FALSE}
+overall_incidents_data = reported_crime_data %>%
+  filter(Violations == "Total, all violations [0]" & Statistics == "Rate per 100,000 population")
+ggplot(data = overall_incidents_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  coord_cartesian(ylim = c(0, 8000)) +
+  geom_smooth(method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  labs(title = "Total, all violations -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./total_reported_crime_rate_1998-2021_feature.jpg", device = "jpeg", width = 2400, height = 1200, units = "px")
+ggsave("./total_reported_crime_rate_1998-2021_twitter.jpg", device = "jpeg", width = 2400, height = 1254, units = "px")
+```
+
 # How many data points to use?
 
 This section produces two additional graphs to show how the direction of the trend changes if fewer points are used. This graph uses only the 8 most recent years:
