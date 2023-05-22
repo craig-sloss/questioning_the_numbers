@@ -1,0 +1,402 @@
+---
+title: "Subjectivity in Data Analysis"
+author: "Craig A. Sloss"
+date: "2023-05-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction and Setup
+
+This notebook is a supplement to the article "Debunking the Police Part 2: Why we don't (usually) only use two years of data" in *Questioning the Numbers*, showing the code used to generate the graphics and statistical results appearing in the article. (See https://questioning-the-numbers.ghost.io/) Section titles in this document correspond to the sections in the article. This notebook also contains some additional discussion of technical details that are not in the article.
+
+The following packages are used in this notebook:
+```{r cars}
+require(tidyverse)
+require(curl)
+```
+
+Download the full Uniform Crime Reporting Survey data from https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3510017701:
+```{r}
+curl_download("https://www150.statcan.gc.ca/n1/tbl/csv/35100177-eng.zip", "ucr_full.zip")
+unzip("ucr_full.zip")
+ucr_full = read_csv("./35100177.csv")
+```
+
+Preview the data:
+```{r}
+ucr_full %>% head()
+```
+
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
+```{r}
+reported_crime_data = ucr_full %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
+  select(REF_DATE, Violations, Statistics, VALUE)
+reported_crime_data %>% head()
+```
+
+Download the full Crime Severity Index data from https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3510002601:
+```{r}
+curl_download("https://www150.statcan.gc.ca/n1/en/tbl/csv/35100026-eng.zip?st=b0kCP-3L", "csi_full.zip")
+unzip("csi_full.zip")
+csi_full = read_csv("./35100026.csv")
+```
+
+Preview the data:
+```{r}
+csi_full %>% head()
+```
+
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
+```{r}
+csi_data = csi_full %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]" & Statistics == "Crime severity index") %>%
+  select(REF_DATE, VALUE)
+csi_data
+```
+
+The trend_sensitivity_test function from the notebook 01_subjectivity_in_data_analysis.Rmd will be re-used in this notebook. (See the previous notebook for a detailed discussion.) I added a "log-poisson" option to this function, to provide an option for discrete distributions, since in this notebook I look at some statistics that are counts rather than rates.
+
+```{r}
+trend_sensitivity_test = function(x, y, method = "log-gamma") {
+  x_min = min(x)
+  x_max = max(x) - 2
+  x_range = x_min:x_max
+  x_length = length(x_range)
+  upper_ci = rep(NA, x_length)
+  middle = rep(NA, x_length) 
+  lower_ci = rep(NA, x_length)
+  data = data.frame(x, y)
+  for (i in 1:x_length) {
+    truncated_data = data %>%
+      filter(x >= x_range[i])
+    
+    if (method == "log-gamma") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = Gamma(link = "log"))
+    }
+    else if (method == "linear") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "identity"))
+    }
+    else if (method == "log-normal") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "log"))
+    }
+    else if (method == "log-inverse-gaussian") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = inverse.gaussian(link = "log"))
+    }
+    else if (method == "log-poisson") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = poisson(link = "log"))
+    }
+    else{
+      print("Error: valid methods are log-gamma, linear, log-normal, or log-inverse-gaussian")
+      stop()
+    }
+    
+    se = summary(trend_glm)$coefficients[2,2]
+    beta = trend_glm$coefficients[2]
+    if (method == "linear") {
+      upper_ci[i] = beta + 2 * se 
+      middle[i] = beta 
+      lower_ci[i] = beta - 2 * se
+    }
+    else {
+      upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
+      middle[i] = (exp(beta) - 1) * 100
+      lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+    }
+  }
+  trend_result_data = data.frame(x_range, upper_ci, middle, lower_ci)
+  return(trend_result_data)
+}
+```
+
+
+# Year-over-year changes have no predictive value
+
+This section looks at changes in the number of incidents of "Total firearms, use of, discharge, pointing" over time in order to demonstrate the limitations of relying on year-over-year changes for budget planning purposes. Two classes of firearm incidents -- using a firearm in commission of an offence and pointing a firearm -- were effective April 1, 2008 (see https://www.statcan.gc.ca/en/statistical-programs/document/3302_D15_V10). To avoid the change in definition impacting the analysis, I decided only to use data from 2009 and later, since 2009 is the first full year under the new definition. Note also that the UCR classifies incidents according to the most serious violation to occur as part of the incident, so this data excludes situations in which a firearm was used in an incident that was recorded as a more serious type of crime. 
+
+First, produce the graph of the number of incidents over time:
+
+```{r message=FALSE, warning=FALSE}
+firearms_data = reported_crime_data %>% filter(REF_DATE >= 2009 &
+                                                 Violations == "Total firearms, use of, discharge, pointing [150]" &
+                                                 Statistics == "Actual incidents")
+ggplot(data = firearms_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() + 
+  geom_point() + 
+  coord_cartesian(ylim = c(0, 55)) + 
+  geom_smooth(method = "glm", method.args = list(family = poisson(link = "log"))) +
+  scale_x_continuous(breaks = seq(2009, 2021, 1)) +
+  labs(title = "Reported incidents - Total firearms use, discharge, pointing",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Number of Incidents Reported",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./firearms_incidents_2009_2021.jpg", device = "jpeg")
+```
+
+To better understand the volatility, look at some summary statistics in the year-over-year percentage change. This function calculates year-over-year changes in the number of incidents, as a percentage increase or decrease, and then produces some distributional statistics related to the year-over-year changes. The inputs to this function are:
+
+* data is a subset of the UCR data, containing the columns "Violations", "Statistics", and "VALUE". It should be pre-filtered for the geographical area and years of interest.
+
+* violation is a character string specifying the type of violation for which the statistics will be computed.
+
+The output is a list with four items:
+
+* mean is the average value of the year-over-year percentage change
+
+* quantiles is a list containing the minimum, first quartile, median, third quartile, and maximum year-over-year percentage change
+
+* mean_abs is the average size of the year-over-year change, ignoring direction
+
+* quantiles_abs is a list containing the minimum, first quartile, median, third quartile, and maximum year-over-year percentage change, ignoring direction
+
+```{r}
+yoy_count_change_summary_statistics = function(data, violation) {
+  base_data = data %>%
+    filter(Violations == violation & Statistics == "Actual incidents") 
+  change_data = base_data %>%
+    left_join(base_data %>%
+              mutate(REF_DATE = REF_DATE + 1) %>%
+              select(REF_DATE, PREV_VALUE = VALUE)) %>%
+    mutate(yoy_pct_change = (VALUE / PREV_VALUE - 1) * 100,
+           size_of_change = abs(yoy_pct_change))
+  return(list(mean = change_data %>% pull(yoy_pct_change) %>% mean(na.rm = TRUE),
+              quantiles = quantile(change_data %>% pull(yoy_pct_change), na.rm = TRUE),
+              mean_abs = change_data %>% pull(size_of_change) %>% mean(na.rm = TRUE),
+              quantiles_abs = quantile(change_data %>% pull(size_of_change), na.rm = TRUE)))
+}
+```
+
+Assess typical distribution of year-over-year percentage changes:
+
+```{r}
+firearms_change_summary = yoy_count_change_summary_statistics(data = reported_crime_data %>% filter(REF_DATE >= 2009 & REF_DATE <= 2021),
+                                                 violation = "Total firearms, use of, discharge, pointing [150]")
+```
+
+```{r}
+firearms_change_summary$quantiles
+```
+
+```{r}
+firearms_change_summary$quantiles_abs
+```
+
+Note that half of the time, the size of the change is bigger than 22%. 
+
+Check the percentage increase in 2021:
+
+```{r}
+((reported_crime_data %>% filter(REF_DATE == 2021 & Violations == "Total firearms, use of, discharge, pointing [150]" & Statistics == "Actual incidents") %>% pull(VALUE)) / (reported_crime_data %>% filter(REF_DATE == 2020 & Violations == "Total firearms, use of, discharge, pointing [150]" & Statistics == "Actual incidents") %>% pull(VALUE)) - 1) * 100
+```
+
+
+Next, check the sensitivity of the trend analysis to the start point of the trend line:
+```{r}
+trend_result_data = trend_sensitivity_test(x = firearms_data %>% pull(REF_DATE),
+                                           y = firearms_data %>% pull(VALUE),
+                                           method = "log-poisson") %>%
+  rename(years = x_range)
+trend_result_data
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(2009, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Reported incidents - Total firearms use, discharge, pointing - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./firearms_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+
+There are potentially three interpretations from this: 
+
+* Using the full range of data is consistent with an interpretation that this statistic is not trending, and instead is oscillating around an average vaule of 33. 
+
+* If the trend line starts in the range 2013-2017, and we assume it continues to the present, we would conclude that there is an increasing trend. 
+
+* There was an increasing medium-term trend, but the number of incidents has since stabilized. It now oscillates around an average that is higher than it was historically (e.g. 40 incidents, using data from 2018 onward).
+
+# Using only two years of data can overestimate the size of a trend
+
+## Luring incidents
+
+Visualize the data on number of luring incidents in the UCR survey: 
+
+```{r}
+luring_data = reported_crime_data %>% filter(REF_DATE >= 2009 & 
+                                               Violations == "Luring a child via a computer [1370]" & 
+                                               Statistics == "Actual incidents")
+ggplot(data = luring_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() + 
+  geom_point() + 
+  geom_smooth(method = "glm", method.args = list(family = poisson(link = "log"))) +
+  coord_cartesian(ylim = c(0, 35)) + 
+  scale_x_continuous(breaks = seq(2009, 2021, 1)) +
+  labs(title = "Reported incidents - Luring a Child via a Computer",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Number of Incidents Reported",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./luring_incidents_2009_2021.jpg", device = "jpeg")
+```
+
+Check sensitivity of the trend analysis to the choice of starting point:
+```{r}
+trend_result_data = trend_sensitivity_test(x = luring_data %>% pull(REF_DATE),
+                                           y = luring_data %>% pull(VALUE),
+                                           method = "log-poisson") %>%
+  rename(years = x_range)
+trend_result_data
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(2009, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Reported incidents - Luring a Child via a Computer - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./luring_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+The conclusion of an increasing trend is fairly consistent regardless of the starting point, with the exception of very recent years which could be due to low data volume. 
+
+Switch to using a linear model to obtain a trend that can be interperted additively.
+
+```{r}
+trend_result_data = trend_sensitivity_test(x = luring_data %>% pull(REF_DATE),
+                                           y = luring_data %>% pull(VALUE),
+                                           method = "linear") %>%
+  rename(years = x_range)
+trend_result_data
+```
+
+Assess typical distribution of year-over-year percentage changes:
+
+```{r}
+luring_change_summary = yoy_count_change_summary_statistics(data = reported_crime_data %>% filter(REF_DATE >= 2009 & REF_DATE <= 2021),
+                                                 violation = "Luring a child via a computer [1370]")
+```
+
+```{r}
+luring_change_summary$quantiles
+```
+
+```{r}
+luring_change_summary$quantiles_abs
+```
+
+## Crime Severity Index
+
+Check the sensitivity of the "year-to-2021" percentage change in the CSI, to the selection of the comparison year.
+
+```{r}
+ggplot(data = csi_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_point() + 
+  geom_line() +
+  geom_smooth(method = "glm", method.args = list(family = Gamma(link = "log"))) + 
+  coord_cartesian(ylim = c(0, 105)) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  labs(title = "Total Crime Severity Index",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Total CSI",
+       caption = "Based on Statistics Canada, Crime Severity Index and Weightd Clearance Rates")
+```
+
+For calculating the percentage change relative to a reference year, check the sensitivity of the choice of reference year:
+
+```{r}
+csi_2021 = csi_data %>% filter(REF_DATE == 2021) %>% pull(VALUE)
+csi_percentage_change = csi_data %>%
+  filter(REF_DATE <= 2020) %>%
+  mutate(change_to_2021 = csi_2021 / VALUE,
+         change_to_2021_annualized = change_to_2021^(1 / (2021 - REF_DATE)),
+         pct_change_to_2021 = 100 * (change_to_2021 - 1),
+         Direction = ifelse(pct_change_to_2021 > 0, "Increase", "Decrease"))
+csi_percentage_change
+```
+
+```{r}
+ggplot(csi_percentage_change, aes(x = REF_DATE, y = pct_change_to_2021, fill = Direction)) +
+  geom_bar(stat = "identity", width = 0.25) + 
+  geom_point(size = 3, shape = 21, colour = "Black") + 
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2020, 2)) +
+  scale_fill_manual(values = c("Green", "Purple")) +
+  labs(title = "Impact of selection of reference year on percentage change in CSI",
+       subtitle = "Total Crime Severity Index - Kitchener-Cambridge-Waterloo",
+       x = "Reference year",
+       y = "Percentage change by 2021",
+       caption = "Based on Statistics Canada, Crime Severity Index and Weightd Clearance Rates")
+ggsave("./csi_reference_year_sensitivity_test.jpg", device = "jpeg")
+```
+
+```{r}
+quantile(csi_percentage_change$pct_change_to_2021, na.rm = TRUE)
+```
+
+
+# When are Year-Over-Year Changes Meaningful?
+
+This function extracts the "Percentage Change in Rate" statistic for a specified violation from the USR data, and then computes various summary statistics. (It is similar to the function yoy_count_change_summary_statistics described above, except that there is no need to calculate the change in rate because it is already in the dataset.)
+
+```{r}
+yoy_rate_change_summary_statistics = function(data, violation) {
+  yoy_data = data %>%
+    filter(Violations == violation & Statistics == "Percentage change in rate") %>%
+    mutate(size_of_change = abs(VALUE))
+  return(list(mean = yoy_data %>% pull(VALUE) %>% mean(na.rm = TRUE),
+              quantiles = quantile(yoy_data %>% pull(VALUE), na.rm = TRUE),
+              mean_abs = yoy_data %>% pull(size_of_change) %>% mean(na.rm = TRUE),
+              quantiles_abs = quantile(yoy_data %>% pull(size_of_change), na.rm = TRUE)))
+}
+```
+
+Create a graph of "Total theft over $5,000 (non-motor vehicle) [230]":
+
+```{r}
+theft_over_5k_data = reported_crime_data %>%
+  filter(Violations == "Total theft over $5,000 (non-motor vehicle) [230]" & Statistics == "Rate per 100,000 population")
+ggplot(data = theft_over_5k_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  coord_cartesian(ylim = c(0, 125)) +
+  labs(title = "Theft over $5000 (non-motor vehicle) -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./theft_over_5k_1998_2021.jpg", device = "jpeg")
+```
+```{r}
+theft_change_summary = yoy_rate_change_summary_statistics(data = reported_crime_data %>% filter(REF_DATE <= 2019), violation = "Total theft over $5,000 (non-motor vehicle) [230]")
+```
+
+```{r}
+theft_change_summary$quantiles_abs
+```
+
+For 2020 and 2021, the year-over-year changes are:
+```{r}
+reported_crime_data %>% 
+  filter(REF_DATE > 2019 & Violations == "Total theft over $5,000 (non-motor vehicle) [230]" & Statistics == "Percentage change in rate")
+```
+
