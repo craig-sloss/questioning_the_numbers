@@ -128,7 +128,6 @@ ggplot(data = firearms_data, aes(x = REF_DATE, y = VALUE)) +
   geom_line() + 
   geom_point() + 
   coord_cartesian(ylim = c(0, 55)) + 
-  geom_smooth(method = "glm", method.args = list(family = poisson(link = "log"))) +
   scale_x_continuous(breaks = seq(2009, 2021, 1)) +
   labs(title = "Reported incidents - Total firearms use, discharge, pointing",
        subtitle = "Kitchener-Cambridge-Waterloo",
