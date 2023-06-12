@@ -350,6 +350,29 @@ ggsave("./csi_reference_year_sensitivity_test.jpg", device = "jpeg")
 quantile(csi_percentage_change$pct_change_to_2021, na.rm = TRUE)
 ```
 
+For comparison, what do the results of fitting a trend line look like?
+
+```{r}
+trend_result_data = trend_sensitivity_test(x = csi_data %>% pull(REF_DATE),
+                                           y = csi_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
+trend_result_data
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Total Crime Severity Index - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+```
 
 # When are Year-Over-Year Changes Meaningful?
 
