@@ -135,6 +135,8 @@ ggplot(data = firearms_data, aes(x = REF_DATE, y = VALUE)) +
        y = "Number of Incidents Reported",
        caption = "Statistics Canada, Uniform Crime Reporting Survey")
 ggsave("./firearms_incidents_2009_2021.jpg", device = "jpeg")
+ggsave("./firearms_incidents_2009_2021_feature.jpg", device = "jpeg", width = 2400, height = 1200, units = "px")
+ggsave("./firearms_incidents_2009_2021_twitter.jpg", device = "jpeg", width = 2400, height = 1254, units = "px")
 ```
 
 To better understand the volatility, look at some summary statistics in the year-over-year percentage change. This function calculates year-over-year changes in the number of incidents, as a percentage increase or decrease, and then produces some distributional statistics related to the year-over-year changes. The inputs to this function are:
