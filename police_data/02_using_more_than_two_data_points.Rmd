@@ -315,7 +315,7 @@ ggplot(data = csi_data, aes(x = REF_DATE, y = VALUE)) +
        subtitle = "Kitchener-Cambridge-Waterloo",
        x = "Year",
        y = "Total CSI",
-       caption = "Based on Statistics Canada, Crime Severity Index and Weightd Clearance Rates")
+       caption = "Based on Statistics Canada, Crime Severity Index and Weighted Clearance Rates")
 ```
 
 For calculating the percentage change relative to a reference year, check the sensitivity of the choice of reference year:
@@ -342,7 +342,7 @@ ggplot(csi_percentage_change, aes(x = REF_DATE, y = pct_change_to_2021, fill = D
        subtitle = "Total Crime Severity Index - Kitchener-Cambridge-Waterloo",
        x = "Reference year",
        y = "Percentage change by 2021",
-       caption = "Based on Statistics Canada, Crime Severity Index and Weightd Clearance Rates")
+       caption = "Based on Statistics Canada, Crime Severity Index and Weighted Clearance Rates")
 ggsave("./csi_reference_year_sensitivity_test.jpg", device = "jpeg")
 ```
 
