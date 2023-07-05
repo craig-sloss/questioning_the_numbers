@@ -1,7 +1,7 @@
 ---
-title: "Subjectivity in Data Analysis"
+title: "Why Two Years Won't Suffice"
 author: "Craig A. Sloss"
-date: "2023-05-06"
+date: "2023-06-15"
 output: html_document
 ---
 
@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Introduction and Setup
 
-This notebook is a supplement to the article "Debunking the Police Part 2: Why we don't (usually) only use two years of data" in *Questioning the Numbers*, showing the code used to generate the graphics and statistical results appearing in the article. (See https://questioning-the-numbers.ghost.io/) Section titles in this document correspond to the sections in the article. This notebook also contains some additional discussion of technical details that are not in the article.
+This notebook is a supplement to the article "Why Two Years Won't Suffice: Unveiling the Drawbacks of Limited Data" in *Questioning the Numbers*, showing the code used to generate the graphics and statistical results appearing in the article. (See https://questioning-the-numbers.ghost.io/) Section titles in this document correspond to the sections in the article. This notebook also contains some additional discussion of technical details that are not in the article.
 
 The following packages are used in this notebook:
 ```{r cars}
