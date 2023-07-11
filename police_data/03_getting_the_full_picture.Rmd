@@ -1,0 +1,481 @@
+---
+title: "Getting the Full Picture"
+author: "Craig A. Sloss"
+date: "2023-07-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction and Setup
+
+This notebook is a supplement to the article "Getting the Full Picture" in *Questioning the Numbers*, showing the code used to generate the graphics and statistical results appearing in the article. (See https://questioning-the-numbers.ghost.io/) Section titles in this document correspond to the sections in the article. This notebook also contains some additional discussion of technical details that are not in the article.
+
+The following packages are used in this notebook:
+```{r cars}
+require(tidyverse)
+require(curl)
+```
+
+Download the full Uniform Crime Reporting Survey data from https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=3510017701:
+```{r}
+curl_download("https://www150.statcan.gc.ca/n1/tbl/csv/35100177-eng.zip", "ucr_full.zip")
+unzip("ucr_full.zip")
+ucr_full = read_csv("./35100177.csv")
+```
+
+Preview the data:
+```{r}
+ucr_full %>% head()
+```
+
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
+```{r}
+reported_crime_data = ucr_full %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
+  select(REF_DATE, Violations, Statistics, VALUE)
+reported_crime_data %>% head()
+```
+
+The trend_sensitivity_test function from the notebook 01_subjectivity_in_data_analysis.Rmd will be re-used in this notebook. (See the previous notebook for a detailed discussion.) I added a "log-poisson" option to this function, to provide an option for discrete distributions, since in this notebook I look at some statistics that are counts rather than rates.
+
+```{r}
+trend_sensitivity_test = function(x, y, method = "log-gamma") {
+  x_min = min(x)
+  x_max = max(x) - 2
+  x_range = x_min:x_max
+  x_length = length(x_range)
+  upper_ci = rep(NA, x_length)
+  middle = rep(NA, x_length) 
+  lower_ci = rep(NA, x_length)
+  data = data.frame(x, y)
+  for (i in 1:x_length) {
+    truncated_data = data %>%
+      filter(x >= x_range[i])
+    
+    if (method == "log-gamma") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = Gamma(link = "log"))
+    }
+    else if (method == "linear") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "identity"))
+    }
+    else if (method == "log-normal") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = gaussian(link = "log"))
+    }
+    else if (method == "log-inverse-gaussian") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = inverse.gaussian(link = "log"))
+    }
+    else if (method == "log-poisson") {
+      trend_glm = glm(y ~ x, data = truncated_data, family = poisson(link = "log"))
+    }
+    else{
+      print("Error: valid methods are log-gamma, linear, log-normal, or log-inverse-gaussian")
+      stop()
+    }
+    
+    se = summary(trend_glm)$coefficients[2,2]
+    beta = trend_glm$coefficients[2]
+    if (method == "linear") {
+      upper_ci[i] = beta + 2 * se 
+      middle[i] = beta 
+      lower_ci[i] = beta - 2 * se
+    }
+    else {
+      upper_ci[i] = (exp(beta + 2 * se) - 1) * 100
+      middle[i] = (exp(beta) - 1) * 100
+      lower_ci[i] = (exp(beta - 2 * se) - 1) * 100
+    }
+  }
+  trend_result_data = data.frame(x_range, upper_ci, middle, lower_ci)
+  return(trend_result_data)
+}
+```
+
+
+The function yoy_rate_change_summary_statistics is a variation on the yoy_count_change_summary_statistics function from the notebook 02_using_more_than_two_data_points.Rmd. This function calculates year-over-year changes in the rate of incidents per 100 K population, as a percentage increase or decrease, and then produces some distributional statistics related to the year-over-year changes. The inputs to this function are:
+
+* data is a subset of the UCR data, containing the columns "Violations", "Statistics", and "VALUE". It should be pre-filtered for the geographical area and years of interest.
+
+* violation is a character string specifying the type of violation for which the statistics will be computed.
+
+The output is a list with four items:
+
+* mean is the average value of the year-over-year percentage change
+
+* quantiles is a list containing the minimum, first quartile, median, third quartile, and maximum year-over-year percentage change
+
+* mean_abs is the average size of the year-over-year change, ignoring direction
+
+* quantiles_abs is a list containing the minimum, first quartile, median, third quartile, and maximum year-over-year percentage change, ignoring direction
+
+```{r}
+yoy_rate_change_summary_statistics = function(data, violation) {
+  base_data = data %>%
+    filter(Violations == violation & Statistics == "Rate per 100,000 population") 
+  change_data = base_data %>%
+    left_join(base_data %>%
+              mutate(REF_DATE = REF_DATE + 1) %>%
+              select(REF_DATE, PREV_VALUE = VALUE)) %>%
+    mutate(yoy_pct_change = (VALUE / PREV_VALUE - 1) * 100,
+           size_of_change = abs(yoy_pct_change))
+  return(list(mean = change_data %>% pull(yoy_pct_change) %>% mean(na.rm = TRUE),
+              quantiles = quantile(change_data %>% pull(yoy_pct_change), na.rm = TRUE),
+              mean_abs = change_data %>% pull(size_of_change) %>% mean(na.rm = TRUE),
+              quantiles_abs = quantile(change_data %>% pull(size_of_change), na.rm = TRUE)))
+}
+```
+
+
+# How often do we see year-over-year increases and decreases?
+
+## Distribution of increases and decreases
+
+Extract the year-over-year percentage changes in the rate, and create an indicator, non_decrease_yoy, which is TRUE if the rate increased or stayed the same year-over-year, and FALSE otherwise. Exclude any records that have "Total" in the name.
+
+```{r}
+increase_decrease_data = reported_crime_data %>%
+  filter(!grepl("Total", Violations) & Statistics == "Percentage change in rate") %>%
+  mutate(non_decrease_yoy = VALUE >= 0,
+         absolute_change = abs(VALUE))
+```
+
+Number of types of violations in the original dataset:
+```{r}
+length(unique(reported_crime_data$Violations))
+```
+
+Check the number of types of violations after removing "Total" entries, in each year. This is done because new types of violations have been introduced over time, and we want to identify a time period during which the number of violations being tracked has been consistent.
+
+```{r}
+increase_decrease_data %>%
+  group_by(REF_DATE) %>%
+  summarise(number_of_violations = n_distinct(Violations))
+```
+
+Since the number of violations tracked in the dataset has been constant at 266 since 2015, we'll do this analysis using only data from 2015 and later. Create a dataset showing the percentage of violations that saw a year-over-year increase (or staying the same) for each year since 2015:
+```{r}
+increase_decrease_distribution = increase_decrease_data %>%
+  filter(REF_DATE >= 2015) %>%
+  group_by(REF_DATE) %>%
+  summarise(percent_non_decrease_yoy = mean(non_decrease_yoy, na.rm = TRUE),
+            percent_decrease_yoy = 1 - percent_non_decrease_yoy) %>%
+  pivot_longer(cols = c("percent_non_decrease_yoy", "percent_decrease_yoy"))
+increase_decrease_distribution
+```
+
+Use a stacked area chart to visualize the split between increasing and decreasing violations over time:
+
+```{r}
+ggplot(data = increase_decrease_distribution, aes(x = REF_DATE, y = value * 100, fill = name)) +
+  geom_area(position = "stack") + 
+  scale_x_continuous(breaks = seq(2015, 2021, 1)) +
+  scale_fill_discrete(name = "Direction of YOY Change", labels = c("Decreasing", "Increasing or Unchanged"), type = c("green", "purple")) +
+  labs(title = "Direction of Year-over-year Change in Reported Incident Rate",
+       subtitle = "By Category of Violation in UCR Survey -- 'Total' entries excluded",
+       x = "Year",
+       y = "Percentage of Categories of Violation",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./increase_decrease_distribution_2015_2021.jpg", device = "jpeg")
+ggsave("./increase_decrease_distribution_2015_2021_feature.jpg", device = "jpeg", width = 2400, height = 1200, units = "px")
+ggsave("./increase_decrease_distribution_2015_2021_twitter.jpg", device = "jpeg", width = 2400, height = 1254, units = "px")
+```
+
+## Identifying potential recent trends (Supplementary Content)
+
+This subsection contains some additional material that was not covered in the main article. It demonstrates how to quickly scan all the violations in the data to identify whether they might potentially be trending over a specified time period. The results of this function should not be viewed as definitive; its intended use is to identify violations that may be worth performing a more detailed trend analysis on (e.g. by visualizing the data, testing the sensitivity of the start year, etc.)
+
+The inputs to this function are:
+
+* data is a subset of the UCR data, containing the columns "Violations", "Statistics", "REF_DATE", and "VALUE". It should be pre-filtered for the geographical area.
+
+* first_year is the earliest year that gets included in the trend analysis. 
+
+* statistic is the quantity in the "Statistics" column of the UCR data for which the trends will be calculated. Examples include "Rate per 100,000 population" and "Actual Incidents"
+
+The output of the function is a data frame with the following columns:
+
+* Violations is the name of the violation for which the trend calculation was performed
+
+* multiplicative_trend is the annual multiplicative trend estimated using a log-Gamma GLM, using only data corresponding to first_year and later
+
+* value_2021 is the value of "statistic" in 2021; this is included so that it can be used to filter out results for low-volume violations if needed
+
+* p_values is the p-value corresponding to the multiplicative trend, as estimated by the GLM
+
+A row in the data will only be generated for violations that have data for every year after first_year.
+
+```{r}
+scan_for_potential_trends = function(data, first_year, statistic) {
+  trend_data = data %>%
+    filter(REF_DATE >= first_year & Statistics == statistic)
+  # Calculate the number of years in the data for later reference
+  number_of_years = trend_data %>%
+    pull(REF_DATE) %>%
+    n_distinct()
+  # Create empty arrays to store results
+  Violations = unique(trend_data$Violations)
+  multiplicative_trend = rep(NA, length(Violations))
+  value_2021 = rep(NA, length(Violations))
+  p_values = rep(NA, length(Violations))
+  # Loop over the violations in the data; fit a log-link GLM to get multiplicative trends.
+  # Store the coefficients, p-values, and value of the statistic in 2021 in the arrays
+  # This is done only if the violation has data for all years after first_year; otherwise NA is output
+  for (i in 1:(length(Violations))) {
+    trend_data_current = trend_data %>% filter(VALUE > 0 & Violations == Violations[i])
+    if (nrow(trend_data_current) == number_of_years) {
+      trend_glm = glm(VALUE ~ REF_DATE, data = trend_data_current, family = Gamma(link = "log"))
+      multiplicative_trend[i] = exp(trend_glm$coefficients[2])
+      value_2021[i] = trend_data %>% filter(REF_DATE == 2021 & Violations == Violations[i]) %>%
+      pull(VALUE)
+      p_values[i] = summary(trend_glm)$coefficients[2,4]
+    } else {
+      multiplicative_trend[i] = NA
+      value_2021[i] = NA
+      p_values[i] = NA
+    }
+  }
+  # Assemble the arrays into a data frame; remove missing values and sort by the size of the trend
+  trend_results = data.frame(Violations = Violations, multiplicative_trend = multiplicative_trend, value_2021 = value_2021, p_values = p_values) %>%
+    filter(!is.na(multiplicative_trend)) %>%
+    arrange(multiplicative_trend)
+  return(trend_results)
+}
+```
+
+Find some examples of types of violations that may have medium-term trends over the past 8 years. Limit the output to violations having small p-values, and at least 20 incidents per 100K population in 2021.
+
+```{r}
+medium_term_trends = scan_for_potential_trends(data = reported_crime_data,
+                                               first_year = 2014,
+                                               statistic = "Rate per 100,000 population")
+medium_term_trends %>%
+    filter(p_values < 0.05 & value_2021 >= 20) 
+```
+
+This is the approach I used to identify that there was a potential medium-term decreasing trend in "Theft $5,000 or under", which I investigated in detail in 01_subjectivity_in_data_analysis.Rmd.
+
+
+Find some examples of types of violations that may have short-term trends over the past 4 years. Limit the output to violations having small p-values, and at least 20 incidents per 100K population in 2021.
+```{r}
+short_term_trends = scan_for_potential_trends(data = reported_crime_data,
+                                               first_year = 2018,
+                                               statistic = "Rate per 100,000 population")
+short_term_trends %>% 
+  filter(p_values < 0.05 & value_2021 >= 20) 
+```
+
+This suggests that Breach of Probation may be an example of a violation exhibiting a short-term decreasing trend.
+
+## Breach of Probation
+
+Breach of Probation is one of the candidates identified above as a potential decreasing short-term trend. Visualize the data to confirm. I selected 2016 as the starting point to avoid exaggerating the trend by starting from the highest point:
+
+```{r}
+bop_data = reported_crime_data %>% filter(REF_DATE >= 2009 & Violations == "Breach of probation [3520]" & Statistics == "Rate per 100,000 population")
+ggplot(data = bop_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() + 
+  geom_point() +
+  coord_cartesian(ylim = c(0, 300)) +
+  geom_smooth(data = bop_data %>% filter(REF_DATE >= 2018), method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(2009, 2021, 1)) +
+  labs(title = "Breach of Probation -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./breach_of_probation_2009_2021.jpg", device = "jpeg")
+```
+
+# Reported Crime Rates Showing No Evidence of Trend
+
+Investigate three of the types of violations that were not included in Appendix C of the WRPS memo to see whether data prior to 2021 suggests evidence of a trend. Check the distribution of year-over-year numbers as well to get an idea for how volatile these numbers are for each type of violation.
+
+## Breaking and Entering
+
+```{r}
+b_and_e_data = reported_crime_data %>%
+  filter(Violations == "Total breaking and entering [210]" & Statistics == "Rate per 100,000 population")
+ggplot(data = b_and_e_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(data = b_and_e_data %>% filter(REF_DATE >= 2017), method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  coord_cartesian(ylim = c(0, 1250)) +
+  labs(title = "Breaking and Entering -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./break_and_enter_1998_2021.jpg", device = "jpeg")
+```
+
+```{r}
+b_and_e_change_summary = yoy_rate_change_summary_statistics(data = reported_crime_data %>%
+                                                              filter(REF_DATE >= 1998 & REF_DATE <= 2021),
+                                                            violation = "Total breaking and entering [210]")
+```
+
+```{r}
+b_and_e_change_summary$mean_abs
+```
+
+```{r}
+b_and_e_change_summary$quantiles_abs
+```
+
+Half the time, the year-over-year change is above 10%.
+
+Check sensitivity of the decision to start the trend line from 2017:
+
+```{r}
+trend_result_data_b_and_e = trend_sensitivity_test(x = b_and_e_data %>% pull(REF_DATE),
+                                           y = b_and_e_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
+trend_result_data_b_and_e
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data_b_and_e, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  coord_cartesian(ylim = c(-10, 15)) + 
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Rate per 100K population - Breaking and Entering - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./b_and_e_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+
+## Motor Vehicle Theft
+
+The data look essentially flat from 2015 onward:
+
+```{r}
+motor_vehicle_theft_data = reported_crime_data %>%
+  filter(Violations == "Total theft of motor vehicle [220]" & Statistics == "Rate per 100,000 population")
+ggplot(data = motor_vehicle_theft_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(data = motor_vehicle_theft_data %>% filter(REF_DATE >= 2015), method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  coord_cartesian(ylim = c(0, 700)) +
+  labs(title = "Motor Vehicle Theft -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./motor_vehicle_theft_1998_2021.jpg", device = "jpeg")
+```
+
+```{r}
+motor_vehicle_theft_change_summary = yoy_rate_change_summary_statistics(data = reported_crime_data %>%
+                                                              filter(REF_DATE >= 1998 & REF_DATE <= 2021),
+                                                            violation = "Total theft of motor vehicle [220]")
+```
+
+```{r}
+motor_vehicle_theft_change_summary$mean_abs
+```
+
+```{r}
+motor_vehicle_theft_change_summary$quantiles_abs
+```
+
+Half the time, the year-over-year change is above 12.8%.
+
+Check sensitivity of the results to the decision to start the trend line from 2015:
+
+```{r}
+trend_result_data_motor_vehicle_theft = trend_sensitivity_test(x = motor_vehicle_theft_data %>% pull(REF_DATE),
+                                           y = motor_vehicle_theft_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
+trend_result_data_motor_vehicle_theft
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data_motor_vehicle_theft, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Rate per 100K population - Motor Vehicle Theft - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./motor_vehicle_theft_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+
+There is considerable uncertainty in recent years over whether the pattern is increasing or decreasing, so a flat trend line is a reasonable conclusion. 
+
+## Robbery
+
+```{r}
+robbery_data = reported_crime_data %>%
+  filter(Violations == "Total robbery [160]" & Statistics == "Rate per 100,000 population")
+ggplot(data = robbery_data, aes(x = REF_DATE, y = VALUE)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(data = robbery_data %>% filter(REF_DATE >= 1998), method = "glm", method.args = list(family = Gamma(link = "log"))) +
+  scale_x_continuous(breaks = seq(1998, 2021, 2)) +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(title = "Robbery -- Rate per 100,000 population",
+       subtitle = "Kitchener-Cambridge-Waterloo",
+       x = "Year",
+       y = "Incidents per 100,000 population",
+       caption = "Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./robbery_1998_2021.jpg", device = "jpeg")
+```
+
+
+```{r}
+robbery_change_summary = yoy_rate_change_summary_statistics(data = reported_crime_data %>%
+                                                              filter(REF_DATE >= 1998 & REF_DATE <= 2021),
+                                                            violation = "Total robbery [160]")
+```
+
+```{r}
+robbery_change_summary$mean_abs
+```
+
+```{r}
+robbery_change_summary$quantiles_abs
+```
+
+Half the time, the year-over-year change is above 20%.
+
+Check sensitivity of the results to the decision to start the trend line from 2015:
+
+```{r}
+trend_result_data_robbery= trend_sensitivity_test(x = robbery_data %>% pull(REF_DATE),
+                                           y = robbery_data %>% pull(VALUE),
+                                           method = "log-gamma") %>%
+  rename(years = x_range)
+trend_result_data_robbery
+```
+
+```{r message=FALSE}
+ggplot(trend_result_data_robbery, aes(x = years, y = middle)) + 
+  geom_hline(yintercept = 0, colour = "black", linetype = "dashed") +
+  geom_line(colour = "blue") + 
+  geom_line(aes(y = upper_ci), colour = "red", linetype = "dashed") +
+  geom_line(aes(y = lower_ci), colour = "red", linetype = "dashed") +
+  scale_x_continuous(breaks = seq(1998, 2019, 2)) +
+  labs(title = "Trend analysis results based on first year included in analysis",
+       subtitle = "Rate per 100K population - Robbery - Kitchener-Cambridge-Waterloo",
+       x = "First year included in trend calculation",
+       y = "Percentage trend calculated",
+       caption = "Based on Statistics Canada, Uniform Crime Reporting Survey")
+ggsave("./robbery_trend_sensitivity_analysis.jpg", device = "jpeg")
+```
+
+The long term trend seems to be the only reliable thing we can say about this data -- there is significant variation around the trend line, but the variation appears to be around a mean that has been decreasing over time.
