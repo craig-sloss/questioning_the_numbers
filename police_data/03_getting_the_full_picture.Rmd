@@ -31,12 +31,22 @@ Preview the data:
 ucr_full %>% head()
 ```
 
-Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis. To ensure that the results appearing in the newsletter can be replicated, limit the data to 2021 and earlier so that this gives the same results when additional years of data are added in the future:
 ```{r}
 reported_crime_data = ucr_full %>%
-  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]" &
+           REF_DATE <= 2021) %>%
   select(REF_DATE, Violations, Statistics, VALUE)
 reported_crime_data %>% head()
+```
+
+For comparison purposes, keep the 2022 data in a separate dataset so we can compare any pre-2022 trends to what actually happened in 2022.
+
+```{r}
+recent_reported_crime_data = ucr_full %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]" & REF_DATE == 2022) %>%
+  select(REF_DATE, Violations, Statistics, VALUE)
+recent_reported_crime_data %>% head()
 ```
 
 The trend_sensitivity_test function from the notebook 01_subjectivity_in_data_analysis.Rmd will be re-used in this notebook. (See the previous notebook for a detailed discussion.) I added a "log-poisson" option to this function, to provide an option for discrete distributions, since in this notebook I look at some statistics that are counts rather than rates.
@@ -136,7 +146,8 @@ Extract the year-over-year percentage changes in the rate, and create an indicat
 
 ```{r}
 increase_decrease_data = reported_crime_data %>%
-  filter(!grepl("Total", Violations) & Statistics == "Percentage change in rate") %>%
+  filter(!grepl("Total", Violations) & 
+           Statistics == "Percentage change in rate") %>%
   mutate(non_decrease_yoy = VALUE >= 0,
          absolute_change = abs(VALUE))
 ```
@@ -151,13 +162,16 @@ Check the number of types of violations after removing "Total" entries, in each 
 ```{r}
 increase_decrease_data %>%
   group_by(REF_DATE) %>%
-  summarise(number_of_violations = n_distinct(Violations))
+  summarise(number_of_violations = n_distinct(Violations),
+            missing_change_data = sum(is.na(VALUE)))
 ```
 
-Since the number of violations tracked in the dataset has been constant at 266 since 2015, we'll do this analysis using only data from 2015 and later. Create a dataset showing the percentage of violations that saw a year-over-year increase (or staying the same) for each year since 2015:
+The number of violations for which year-over-year percentage changes are reported has varied between 1999 ad 2017, with the number of missing values ranging from 196 to 214. Given that the purpose of this analysis is to provide a rough idea of how often statistics increase or decrease on a year-over-year basis, exact consistency of the number of violations for which percentage changes are reported is not needed. 
+
+Create a dataset showing the percentage of violations that saw a year-over-year increase (or staying the same) for each year since 1999:
 ```{r}
 increase_decrease_distribution = increase_decrease_data %>%
-  filter(REF_DATE >= 2015) %>%
+  filter(REF_DATE >= 1999) %>%
   group_by(REF_DATE) %>%
   summarise(percent_non_decrease_yoy = mean(non_decrease_yoy, na.rm = TRUE),
             percent_decrease_yoy = 1 - percent_non_decrease_yoy) %>%
@@ -170,16 +184,16 @@ Use a stacked area chart to visualize the split between increasing and decreasin
 ```{r}
 ggplot(data = increase_decrease_distribution, aes(x = REF_DATE, y = value * 100, fill = name)) +
   geom_area(position = "stack") + 
-  scale_x_continuous(breaks = seq(2015, 2021, 1)) +
+  scale_x_continuous(breaks = seq(1999, 2021, 2)) +
   scale_fill_discrete(name = "Direction of YOY Change", labels = c("Decreasing", "Increasing or Unchanged"), type = c("green", "purple")) +
   labs(title = "Direction of Year-over-year Change in Reported Incident Rate",
        subtitle = "By Category of Violation in UCR Survey -- 'Total' entries excluded",
        x = "Year",
        y = "Percentage of Categories of Violation",
        caption = "Statistics Canada, Uniform Crime Reporting Survey")
-ggsave("./increase_decrease_distribution_2015_2021.jpg", device = "jpeg")
-ggsave("./increase_decrease_distribution_2015_2021_feature.jpg", device = "jpeg", width = 2400, height = 1200, units = "px")
-ggsave("./increase_decrease_distribution_2015_2021_twitter.jpg", device = "jpeg", width = 2400, height = 1254, units = "px")
+ggsave("./increase_decrease_distribution_1999_2021.jpg", device = "jpeg")
+ggsave("./increase_decrease_distribution_1999_2021_feature.jpg", device = "jpeg", width = 2400, height = 1200, units = "px")
+ggsave("./increase_decrease_distribution_1999_2021_twitter.jpg", device = "jpeg", width = 2400, height = 1254, units = "px")
 ```
 
 ## Identifying potential recent trends (Supplementary Content)
@@ -288,6 +302,16 @@ ggplot(data = bop_data, aes(x = REF_DATE, y = VALUE)) +
 ggsave("./breach_of_probation_2009_2021.jpg", device = "jpeg")
 ```
 
+What was the value of this statistic in 2022?
+```{r}
+recent_reported_crime_data %>% 
+  filter(Violations == "Breach of probation [3520]" & 
+           Statistics == "Rate per 100,000 population") %>%
+  pull(VALUE)
+```
+
+This is slightly higher than the value of the statistic in 2021 (69.4), suggesting that the trend is no longer consistently going downward.
+
 # Reported Crime Rates Showing No Evidence of Trend
 
 Investigate three of the types of violations that were not included in Appendix C of the WRPS memo to see whether data prior to 2021 suggests evidence of a trend. Check the distribution of year-over-year numbers as well to get an idea for how volatile these numbers are for each type of violation.
@@ -353,6 +377,16 @@ ggplot(trend_result_data_b_and_e, aes(x = years, y = middle)) +
 ggsave("./b_and_e_trend_sensitivity_analysis.jpg", device = "jpeg")
 ```
 
+What was the value of this statistic in 2022?
+```{r}
+recent_reported_crime_data %>% 
+  filter(Violations == "Total breaking and entering [210]" & 
+           Statistics == "Rate per 100,000 population") %>%
+  pull(VALUE)
+```
+
+This value is lower than the 2021 value (459.3), consistent with the conclusion that the value of this statistic has levelled off in recent years. Between 2017 and 2021, this statistic has ranged between 393 and 474.
+
 ## Motor Vehicle Theft
 
 The data look essentially flat from 2015 onward:
@@ -417,6 +451,16 @@ ggsave("./motor_vehicle_theft_trend_sensitivity_analysis.jpg", device = "jpeg")
 
 There is considerable uncertainty in recent years over whether the pattern is increasing or decreasing, so a flat trend line is a reasonable conclusion. 
 
+What was the value of this statistic in 2022?
+```{r}
+recent_reported_crime_data %>% 
+  filter(Violations == "Total theft of motor vehicle [220]" & 
+           Statistics == "Rate per 100,000 population") %>%
+  pull(VALUE)
+```
+
+The value of this statistic has ranged between 136 and 175 in the time period between 2015 and 2021, so the 2022 value is consistent with the conclusion that the rate has stabilized within this range.
+
 ## Robbery
 
 ```{r}
@@ -479,3 +523,13 @@ ggsave("./robbery_trend_sensitivity_analysis.jpg", device = "jpeg")
 ```
 
 The long term trend seems to be the only reliable thing we can say about this data -- there is significant variation around the trend line, but the variation appears to be around a mean that has been decreasing over time.
+
+What was the value of this statistic in 2022?
+```{r}
+recent_reported_crime_data %>% 
+  filter(Violations == "Total robbery [160]" & 
+           Statistics == "Rate per 100,000 population") %>%
+  pull(VALUE)
+```
+
+The value of this statistic has ranged between 47 and 63 in the time period between 2015 and 2021, so the 2022 value is consistent with the conclusion that the rate has stabilized within this range.

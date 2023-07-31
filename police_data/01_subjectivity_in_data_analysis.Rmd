@@ -31,10 +31,11 @@ Preview the data:
 ucr_full %>% head()
 ```
 
-Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis:
+Keep data only for Kitchener-Waterloo-Cambridge, and drop columns that are not needed for this analysis. To ensure that the results appearing in the newsletter can be replicated, limit the data to 2021 and earlier so that this gives the same results when additional years of data are added in the future:
 ```{r}
 reported_crime_data = ucr_full %>%
-  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]") %>%
+  filter(GEO == "Kitchener-Cambridge-Waterloo, Ontario [35541]" &
+           REF_DATE <= 2021) %>%
   select(REF_DATE, Violations, Statistics, VALUE)
 reported_crime_data %>% head()
 ```
